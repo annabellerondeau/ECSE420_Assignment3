@@ -3,37 +3,49 @@ package ca.mcgill.ecse420.a3;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.RecursiveAction;
 
 public class MatrixVectorMultiplication {
-    private static int matrixSize = 3;
+    private static int matrixSize = 4000;
     private static int numberThreads = 30;
 
     public static void main(String[] args) {
         double[][] a = generateRandomMatrix(matrixSize, matrixSize);
-        System.out.println("\nGenerated matrix: " + Arrays.deepToString(a));
         double[] v = generateRandomVector(matrixSize);
-        System.out.println("\n Generated Vector: " + Arrays.toString(v));
         System.out.println("Starting matrix multiplication with " + numberThreads + " threads and matrix size of " + matrixSize + "x" + matrixSize);
 
         System.out.println("\nSequential matrix vector multiplication started.");
-        double[] result = sequentialMatrixVectorMultiply(a, v);
-        System.out.println("\n Sequential matrix vector multiplication result: " + Arrays.toString(result));
+        sequentialMatrixVectorMultiply(a, v);
 
+        System.out.println("\nParallel matrix vector multiplication started.");
+        parallelMultiplyMatrixVector(a, v);
 
-        System.out.println("\nTest sequential matrix vector");
+        System.out.println("\nExecution time comparison started.");
+        compareExecutionTime(a, v);
+
+        System.out.println("\nTest matrix vector multiplication");
+        verifyParallelExecutionResult(a, v);
         verifySequentialExecutionResults();
     }
 
     public static double[] sequentialMatrixVectorMultiply(double[][] a, double[] v){
         double[] result = new double[matrixSize];
         for (int row = 0; row < matrixSize; row++){
-            System.out.println("row: "+row);
             double sum = 0.0;
             for (int col = 0; col < matrixSize; col++) {
                 sum += a[row][col] * v[col];
             }
             result[row] = sum;
         }
+        return result;
+    }
+
+    public static double[] parallelMultiplyMatrixVector(double[][] a, double[] v) {
+        ForkJoinPool pool = new ForkJoinPool(numberThreads);    // create a ForkJoinPool with specified # of processors
+        double[] result = new double[matrixSize];
+        RecursiveAction mainTask = new MultiplyTask(a, v, result, 0, matrixSize);
+        pool.invoke(mainTask);
         return result;
     }
 
@@ -72,6 +84,14 @@ public class MatrixVectorMultiplication {
         System.out.println("Sequential execution validation test results: " + (passed1 && passed2 && passed3 ? "All tests passed." : "Some tests failed."));
     }
 
+    public static void verifyParallelExecutionResult(double[][] a, double[] v){
+        double[] seq_results = sequentialMatrixVectorMultiply(a, v);
+        double[] parallel_results = parallelMultiplyMatrixVector(a, v);
+
+        boolean passed = assertArrayEquals(seq_results, parallel_results);
+        System.out.println("Parallel execution validation test results: " + (passed ? "Verification passed." : "Verification failed."));
+    }
+
     private static boolean assertArrayEquals(double[] expected, double[] actual){
         if (expected == null || actual == null || expected.length != actual.length) {
             return false;
@@ -82,6 +102,66 @@ public class MatrixVectorMultiplication {
             }
         }
         return true;
+    }
+
+    private static class MultiplyTask extends RecursiveAction{
+        private static final int THRESHOLD = matrixSize / 30; // threshold for splitting the task into smaller tasks
+
+        private final double[][] a;
+        private final double[] v;
+        private final double[] result;
+        private final int startRow;
+        private final int endRow;
+
+        MultiplyTask(double[][] a, double[] v, double[] result, int startRow, int endRow) {
+            this.a = a;
+            this.v = v;
+            this.result = result;
+            this.startRow = startRow;
+            this.endRow = endRow;
+        }
+
+        @Override
+        protected void compute() {
+            int rowCount = endRow - startRow;
+            if (rowCount < THRESHOLD) { // base case: if the number of rows is less than the threshold, perform sequential multiplication
+                int cols_A = a[0].length;
+                for (int row = startRow; row < endRow; row++) {
+                    double sum = 0;
+                        for (int k = 0; k < cols_A; k++) {
+                            sum += a[row][k] * v[k];
+                        }
+                        result[row] = sum;
+                }
+            }
+            else {
+                int mid = startRow + rowCount / 2;
+                MultiplyTask task1 = new MultiplyTask(a, v, result, startRow, mid);
+                MultiplyTask task2 = new MultiplyTask(a, v, result, mid, endRow);
+                invokeAll(task1, task2);
+            }
+        }
+    }
+
+    /**
+     * Prints the execution time of sequential and parallel matrix multiplication for the given matrices.
+     * @param a matrix a
+     * @param v vector v
+     */
+    private static void compareExecutionTime(double[][] a, double[] v) {
+        long startTime = System.currentTimeMillis();
+        System.out.println("\n[SEQUENTIAL] Starting sequential matrix multiplication at time " + startTime);
+        sequentialMatrixVectorMultiply(a, v);
+        long endTime = System.currentTimeMillis();
+        System.out.println("[SEQUENTIAL] Ending sequential matrix multiplication at time " + endTime);
+        System.out.println("\n[SEQUENTIAL] Sequential time is " + (endTime - startTime) + " ms");
+
+        startTime = System.currentTimeMillis();
+        System.out.println("\n[PARALLEL] Starting parallel matrix multiplication at time " + startTime);
+        parallelMultiplyMatrixVector(a, v);
+        endTime = System.currentTimeMillis();
+        System.out.println("[PARALLEL] Ending parallel matrix multiplication at time " + endTime);
+        System.out.println("\n[PARALLEL] Parallel time with " + numberThreads + " processors is " + (endTime - startTime) + " ms");
     }
 
     /**
